@@ -93,11 +93,9 @@ export class GameOverScene extends Phaser.Scene {
   }
 
   private createStats(): void {
-    const panel = this.add.rectangle(GAME_WIDTH / 2, 520, 442, 252, 0x07152b, 0.82)
-      .setStrokeStyle(3, 0x62e7ff, 0.34);
-    panel.setDepth(2);
-
-    this.add.text(GAME_WIDTH / 2, 422, this.stats.score.toLocaleString(), {
+    // Score + best label sit above the panel; the panel holds only the stat rows
+    // so nothing clips its border. Lay everything out from explicit anchors.
+    this.add.text(GAME_WIDTH / 2, 410, this.stats.score.toLocaleString(), {
       fontFamily: 'Arial Black, Impact, sans-serif',
       fontSize: '58px',
       color: '#ffffff',
@@ -106,7 +104,7 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(3);
 
     const bestLabel = this.stats.score >= this.stats.bestScore ? 'NEW BEST!' : `BEST ${this.stats.bestScore.toLocaleString()}`;
-    this.add.text(GAME_WIDTH / 2, 471, bestLabel, {
+    this.add.text(GAME_WIDTH / 2, 458, bestLabel, {
       fontFamily: 'Arial Black, Arial, sans-serif',
       fontSize: '22px',
       color: '#ffd65d',
@@ -122,8 +120,19 @@ export class GameOverScene extends Phaser.Scene {
       ['Best Combo', `${this.stats.bestCombo}`]
     ];
 
+    // Size the panel to fit the rows with even top/bottom padding.
+    const rowGap = 34;
+    const padY = 26;
+    const firstRowY = 510;
+    const panelHeight = (rows.length - 1) * rowGap + padY * 2;
+    const panelCenterY = firstRowY - padY + panelHeight / 2;
+
+    this.add.rectangle(GAME_WIDTH / 2, panelCenterY, 442, panelHeight, 0x07152b, 0.82)
+      .setStrokeStyle(3, 0x62e7ff, 0.34)
+      .setDepth(2);
+
     rows.forEach(([label, value], index) => {
-      const y = 520 + index * 31;
+      const y = firstRowY + index * rowGap;
       this.add.text(94, y, label, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '20px',

@@ -50,6 +50,16 @@ export class GameScene extends Phaser.Scene {
   private shieldIcon!: Phaser.GameObjects.Image;
   private tutorialGroup!: Phaser.GameObjects.Container;
 
+  // Pooled, reused Text objects. Creating a Phaser Text rasterizes a new GPU
+  // texture every time — expensive when pickups arrive in clusters (e.g. a row
+  // of 5 pearls firing +score floats and PEARL PERFECT banners in a few frames).
+  // We round-robin a fixed set instead so no allocation/texture upload happens
+  // during play.
+  private floatPool: Phaser.GameObjects.Text[] = [];
+  private floatIndex = 0;
+  private bannerPool: Phaser.GameObjects.Text[] = [];
+  private bannerIndex = 0;
+
   constructor() {
     super('GameScene');
   }
@@ -58,6 +68,7 @@ export class GameScene extends Phaser.Scene {
     this.resetRunState();
     this.createBackground();
     this.createUi();
+    this.createTextPools();
     this.createTutorial();
 
     this.tower = new TowerManager(this);
@@ -67,9 +78,12 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.cameras.main.fadeIn(220, 4, 12, 27);
 
-    // Always silence the ambient pad when leaving the scene (covers Home / restart
-    // paths that don't run endRun), so it never leaks across scenes.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => audio.stopAmbient());
+    // Always silence the ambient pad + music when leaving the scene (covers Home /
+    // restart paths that don't run endRun), so nothing leaks across scenes.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      audio.stopAmbient();
+      audio.stopMusic();
+    });
   }
 
   update(_: number, delta: number): void {
@@ -117,6 +131,10 @@ export class GameScene extends Phaser.Scene {
     this.activePointerX = null;
     this.hasInteracted = false;
     this.hitStopUntil = 0;
+    this.floatPool = [];
+    this.floatIndex = 0;
+    this.bannerPool = [];
+    this.bannerIndex = 0;
   }
 
   private createBackground(): void {
@@ -344,7 +362,9 @@ export class GameScene extends Phaser.Scene {
     if (punch > 0 || comboBoost > 0.5) {
       ringPulse(this, item.x, item.y, item.radius + 6, tint);
     }
-    if (item.type === 'ruby' || item.type === 'pearl') {
+    // Hit-stop only on rubies (rare, single-spawn). Pearls arrive in rows of 5,
+    // so hit-stopping each would freeze the loop repeatedly and feel like lag.
+    if (item.type === 'ruby') {
       this.hitStop(JUICE.hitStop.rich);
     }
 
@@ -406,6 +426,7 @@ export class GameScene extends Phaser.Scene {
     shake(this, 'pop');
     audio.pop();
     audio.stopAmbient();
+    audio.stopMusic();
 
     const save = loadSave();
     const bestScore = Math.max(save.bestScore, this.score);
@@ -439,33 +460,52 @@ export class GameScene extends Phaser.Scene {
     this.shieldIcon.setScale(this.player.shieldHits > 0 ? 0.5 + Math.sin(this.time.now / 170) * 0.035 : 0.42);
   }
 
+  // Pre-create the reusable text objects once (one-time texture cost, off the
+  // hot path) so collecting clusters of pickups never allocates new Text.
+  private createTextPools(): void {
+    for (let i = 0; i < 12; i += 1) {
+      const t = this.add.text(0, 0, '', {
+        fontFamily: 'Arial Black, Arial, sans-serif',
+        fontSize: '20px',
+        color: '#ffffff',
+        stroke: '#061730',
+        strokeThickness: 5
+      }).setOrigin(0.5).setDepth(230).setVisible(false);
+      this.floatPool.push(t);
+    }
+    for (let i = 0; i < 6; i += 1) {
+      const b = this.add.text(0, 0, '', {
+        fontFamily: 'Arial Black, Impact, sans-serif',
+        fontSize: '34px',
+        color: '#ffffff',
+        stroke: '#061730',
+        strokeThickness: 8
+      }).setOrigin(0.5).setDepth(240).setVisible(false);
+      this.bannerPool.push(b);
+    }
+  }
+
   private showComboBanner(text: string): void {
-    const banner = this.add.text(GAME_WIDTH / 2, 244, text, {
-      fontFamily: 'Arial Black, Impact, sans-serif',
-      fontSize: '34px',
-      color: '#ffffff',
-      stroke: '#061730',
-      strokeThickness: 8,
-      shadow: { offsetY: 6, color: '#000000', blur: 8, fill: true }
-    }).setOrigin(0.5).setDepth(240).setScale(0.72);
+    const banner = this.bannerPool[this.bannerIndex];
+    this.bannerIndex = (this.bannerIndex + 1) % this.bannerPool.length;
+    this.tweens.killTweensOf(banner);
 
-    if (text.includes('GREED') || text.includes('RISKY')) banner.setColor('#ffd65d');
-    if (text.includes('POP')) banner.setColor('#ff6d8a');
-    if (text.includes('SAVE')) banner.setColor('#7dffdf');
+    let color = '#ffffff';
+    if (text.includes('GREED') || text.includes('RISKY')) color = '#ffd65d';
+    else if (text.includes('POP')) color = '#ff6d8a';
+    else if (text.includes('SAVE')) color = '#7dffdf';
 
-    this.tweens.add({ targets: banner, y: banner.y - 52, alpha: 0, scale: 1.08, duration: 820, ease: 'Cubic.easeOut', onComplete: () => banner.destroy() });
+    banner.setText(text).setColor(color).setPosition(GAME_WIDTH / 2, 244).setScale(0.72).setAlpha(1).setVisible(true);
+    this.tweens.add({ targets: banner, y: 192, alpha: 0, scale: 1.08, duration: 820, ease: 'Cubic.easeOut', onComplete: () => banner.setVisible(false) });
   }
 
   private showFloatText(text: string, x: number, y: number, color: string, size = 20): void {
-    const t = this.add.text(x, y, text, {
-      fontFamily: 'Arial Black, Arial, sans-serif',
-      fontSize: `${size}px`,
-      color,
-      stroke: '#061730',
-      strokeThickness: 5
-    }).setOrigin(0.5).setDepth(230);
+    const t = this.floatPool[this.floatIndex];
+    this.floatIndex = (this.floatIndex + 1) % this.floatPool.length;
+    this.tweens.killTweensOf(t);
 
-    this.tweens.add({ targets: t, y: y - 44, alpha: 0, scale: 1.12, duration: 650, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+    t.setText(text).setColor(color).setFontSize(size).setPosition(x, y).setScale(1).setAlpha(1).setVisible(true);
+    this.tweens.add({ targets: t, y: y - 44, alpha: 0, scale: 1.12, duration: 650, ease: 'Cubic.easeOut', onComplete: () => t.setVisible(false) });
   }
 
   private spawnCollectBurst(x: number, y: number, tint: number, boost = 0): void {
@@ -508,15 +548,19 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Resume the shared audio context (autoplay policy) and start the ambient pad.
+  // Resume the shared audio context (autoplay policy) and start the ambient pad
+  // plus the looping background music.
   private wakeAudio(): void {
     audio.ensure();
     audio.startAmbient();
+    audio.startMusic();
   }
 
   // Freeze the manual simulation for `ms` of real time. The update loop checks
-  // `hitStopUntil` and skips integration while frozen.
+  // `hitStopUntil` and skips integration while frozen. Ignored if a freeze is
+  // already in progress so rapid collects can't stack into a long stall.
   private hitStop(ms: number): void {
-    this.hitStopUntil = Math.max(this.hitStopUntil, this.time.now + ms);
+    if (this.time.now < this.hitStopUntil) return;
+    this.hitStopUntil = this.time.now + ms;
   }
 }
