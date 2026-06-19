@@ -1,0 +1,19 @@
+{
+  "name": "bubble-bandit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bubble Bandit - 2D HTML5 arcade game built with Phaser 3, Vite and TypeScript.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "phaser": "^3.88.2",
+    "vite": "^5.4.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
