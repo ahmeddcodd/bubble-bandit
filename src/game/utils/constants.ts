@@ -75,3 +75,30 @@ export const JUICE = {
   // Amber warning the glow tints toward when the bubble is dangerously large.
   strainTint: 0xffb04a
 } as const;
+
+export interface ZonePalette {
+  far: number; // darkest, slowest parallax layer tint
+  near: number; // brightest, fastest parallax layer tint
+  glow: number; // ambient glow / vignette wash color
+  ray: number; // light-ray tint
+}
+
+// Altitude color zones. The background continuously interpolates between
+// consecutive zones as the player climbs (see BG.secondsPerZone), so the look
+// drifts seamlessly from the familiar vault opening up toward a starry top.
+export const ZONES: ZonePalette[] = [
+  { far: 0x092451, near: 0x123a64, glow: 0x2bc8ff, ray: 0x5fd6ff }, // Vault (matches current opening)
+  { far: 0x1a1b56, near: 0x3a2e7a, glow: 0x8a6cff, ray: 0xb59bff }, // Jewels
+  { far: 0x4a2e10, near: 0x8a5a1c, glow: 0xffc24a, ray: 0xffe08a }, // Gold heights
+  { far: 0x0b1030, near: 0x1d2a5e, glow: 0x9fd0ff, ray: 0xeaf4ff }  // Starry sky
+];
+
+// Background tuning: parallax layer speed multipliers (far→near), counts, and
+// the altitude→zone mapping.
+export const BG = {
+  parallax: [0.12, 0.22, 0.34],
+  layerTints: [0.55, 0.78, 1.0], // brightness multiplier per layer (far darker)
+  rayCount: 4,
+  foregroundBubbles: 6,
+  secondsPerZone: 16
+} as const;

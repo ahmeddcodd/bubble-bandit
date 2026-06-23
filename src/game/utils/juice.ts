@@ -4,6 +4,20 @@ import { GAME_HEIGHT, GAME_WIDTH, JUICE } from './constants';
 type ShakePreset = keyof typeof JUICE.shake;
 
 /**
+ * Interpolate between two packed RGB ints by t (0..1). Wraps Phaser's color
+ * interpolation — the same approach used for the bubble strain telegraph.
+ */
+export function lerpColor(a: number, b: number, t: number): number {
+  const c = Phaser.Display.Color.Interpolate.ColorWithColor(
+    Phaser.Display.Color.IntegerToColor(a),
+    Phaser.Display.Color.IntegerToColor(b),
+    100,
+    Math.round(Phaser.Math.Clamp(t, 0, 1) * 100)
+  );
+  return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+}
+
+/**
  * Tiny camera shake using named presets so magnitudes are tuned in one place
  * (replaces scattered magic numbers in GameScene).
  */

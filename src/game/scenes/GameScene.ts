@@ -5,8 +5,8 @@ import { LaserGate, SpikeOrb } from '../objects/Hazards';
 import { ComboManager } from '../managers/ComboManager';
 import { TowerManager } from '../managers/TowerManager';
 import { audio } from '../managers/AudioManager';
-import { COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE } from '../utils/constants';
-import { flash, ringPulse, shake } from '../utils/juice';
+import { BG, COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE, ZONES } from '../utils/constants';
+import { flash, lerpColor, ringPulse, shake } from '../utils/juice';
 import { loadSave, saveData } from '../utils/save';
 
 interface RunStats {
@@ -27,8 +27,13 @@ export class GameScene extends Phaser.Scene {
   private collectibles: Collectible[] = [];
   private spikeOrbs: SpikeOrb[] = [];
   private lasers: LaserGate[] = [];
-  private bgPanels: Phaser.GameObjects.Image[] = [];
+  // Parallax depth layers: each is a pair of leapfrogging tower-panel images.
+  private bgLayers: Phaser.GameObjects.Image[][] = [];
   private dust: Phaser.GameObjects.Image[] = [];
+  private rays: Phaser.GameObjects.Rectangle[] = [];
+  private fgBubbles: Phaser.GameObjects.Arc[] = [];
+  private bgGlow!: Phaser.GameObjects.Rectangle;
+  private topVignette!: Phaser.GameObjects.Rectangle;
 
   private score = 0;
   private gems = 0;
@@ -119,8 +124,10 @@ export class GameScene extends Phaser.Scene {
     this.collectibles = [];
     this.spikeOrbs = [];
     this.lasers = [];
-    this.bgPanels = [];
+    this.bgLayers = [];
     this.dust = [];
+    this.rays = [];
+    this.fgBubbles = [];
     this.score = 0;
     this.gems = 0;
     this.coins = 0;
@@ -138,23 +145,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBackground(): void {
+    // Base fill + an ambient glow wash that gets recolored per altitude zone.
     this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, COLORS.deep).setOrigin(0).setDepth(-20);
+    this.bgGlow = this.add.rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, ZONES[0].glow, 0.06).setOrigin(0).setDepth(-19);
 
-    const panelA = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'tower-panel').setDepth(-18).setTint(0x092451);
-    const panelB = this.add.image(GAME_WIDTH / 2, -GAME_HEIGHT / 2, 'tower-panel').setDepth(-18).setTint(0x123a64);
-    this.bgPanels.push(panelA, panelB);
+    // Three parallax depth layers, each a pair of leapfrogging tower-panel images.
+    // Far layer is darkest/slowest, near layer brightest/fastest → depth.
+    this.bgLayers = BG.parallax.map((_, layer) => {
+      const depth = -18 + layer; // -18, -17, -16
+      const top = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'tower-panel').setDepth(depth);
+      const bottom = this.add.image(GAME_WIDTH / 2, -GAME_HEIGHT / 2, 'tower-panel').setDepth(depth);
+      return [top, bottom];
+    });
 
-    const g = this.add.graphics().setDepth(-16);
-    g.fillStyle(0x061022, 0.62);
-    g.fillRoundedRect(0, 0, 42, GAME_HEIGHT, 0);
-    g.fillRoundedRect(GAME_WIDTH - 42, 0, 42, GAME_HEIGHT, 0);
-    g.lineStyle(5, 0x2bc8ff, 0.18);
-    g.strokeLineShape(new Phaser.Geom.Line(42, 0, 42, GAME_HEIGHT));
-    g.strokeLineShape(new Phaser.Geom.Line(GAME_WIDTH - 42, 0, GAME_WIDTH - 42, GAME_HEIGHT));
-    g.lineStyle(3, 0xffd35c, 0.14);
-    for (let y = 70; y < GAME_HEIGHT; y += 120) {
-      g.strokeCircle(22, y, 15);
-      g.strokeCircle(GAME_WIDTH - 22, y + 42, 15);
+    // Light rays: tall, faint, gently swaying columns recolored per zone.
+    for (let i = 0; i < BG.rayCount; i += 1) {
+      const ray = this.add.rectangle(
+        Phaser.Math.Between(60, GAME_WIDTH - 60),
+        GAME_HEIGHT / 2,
+        Phaser.Math.Between(40, 90),
+        GAME_HEIGHT * 1.4,
+        ZONES[0].ray,
+        0.05
+      ).setDepth(-11).setAngle(Phaser.Math.Between(-8, 8));
+      this.rays.push(ray);
     }
 
     for (let i = 0; i < 36; i += 1) {
@@ -166,20 +180,72 @@ export class GameScene extends Phaser.Scene {
       this.dust.push(dot);
     }
 
-    this.add.rectangle(0, 0, GAME_WIDTH, 126, 0x031024, 0.48).setOrigin(0).setDepth(190);
+    // Foreground bubbles drift up past the camera — above gameplay (50-130),
+    // below the top vignette (190) and UI (210). Large + faint so they never
+    // obscure play.
+    for (let i = 0; i < BG.foregroundBubbles; i += 1) {
+      const bubble = this.add.circle(
+        Phaser.Math.Between(40, GAME_WIDTH - 40),
+        Phaser.Math.Between(0, GAME_HEIGHT),
+        Phaser.Math.Between(26, 54),
+        0xbff0ff,
+        0.05
+      ).setDepth(150);
+      bubble.setStrokeStyle(2, 0xffffff, 0.08);
+      this.fgBubbles.push(bubble);
+    }
+
+    this.topVignette = this.add.rectangle(0, 0, GAME_WIDTH, 126, 0x031024, 0.48).setOrigin(0).setDepth(190);
   }
 
   private scrollBackground(deltaMs: number): void {
-    const dy = this.tower.scrollSpeed * 0.22 * (deltaMs / 1000);
-    for (const panel of this.bgPanels) {
-      panel.y += dy;
-      if (panel.y >= GAME_HEIGHT * 1.5) panel.y -= GAME_HEIGHT * 2;
-    }
+    const dt = deltaMs / 1000;
+
+    // Continuous altitude → fractional zone index, then a blended palette.
+    const z = this.tower.elapsedSeconds / BG.secondsPerZone;
+    const lo = Phaser.Math.Clamp(Math.floor(z), 0, ZONES.length - 1);
+    const hi = Phaser.Math.Clamp(lo + 1, 0, ZONES.length - 1);
+    const frac = Phaser.Math.Clamp(z - lo, 0, 1);
+    const far = lerpColor(ZONES[lo].far, ZONES[hi].far, frac);
+    const near = lerpColor(ZONES[lo].near, ZONES[hi].near, frac);
+    const glow = lerpColor(ZONES[lo].glow, ZONES[hi].glow, frac);
+    const ray = lerpColor(ZONES[lo].ray, ZONES[hi].ray, frac);
+
+    this.bgGlow.setFillStyle(glow, 0.06);
+
+    // Scroll + tint each parallax layer (far/dark/slow → near/bright/fast).
+    this.bgLayers.forEach((panels, layer) => {
+      const dy = this.tower.scrollSpeed * BG.parallax[layer] * dt;
+      const tint = lerpColor(far, near, layer / (BG.parallax.length - 1));
+      const dim = BG.layerTints[layer];
+      const litTint = lerpColor(0x000000, tint, dim);
+      for (const panel of panels) {
+        panel.y += dy;
+        if (panel.y >= GAME_HEIGHT * 1.5) panel.y -= GAME_HEIGHT * 2;
+        panel.setTint(litTint);
+      }
+    });
+
+    this.rays.forEach((r, index) => {
+      r.setFillStyle(ray, 0.05);
+      r.x += Math.sin(this.time.now / 1400 + index * 1.7) * 0.12;
+      r.setAngle(Math.sin(this.time.now / 2600 + index) * 7);
+    });
 
     this.dust.forEach((dot, index) => {
-      dot.y += (this.tower.scrollSpeed * (0.18 + (index % 4) * 0.03)) * (deltaMs / 1000);
+      dot.y += (this.tower.scrollSpeed * (0.18 + (index % 4) * 0.03)) * dt;
       dot.x += Math.sin(this.time.now / 700 + index) * 0.12;
       if (dot.y > GAME_HEIGHT + 12) dot.y = -12;
+    });
+
+    // Foreground bubbles rise faster than the scroll for a parallax-forward cue.
+    this.fgBubbles.forEach((bubble, index) => {
+      bubble.y -= (this.tower.scrollSpeed * 0.42 + index * 4) * dt;
+      bubble.x += Math.sin(this.time.now / 900 + index * 2.1) * 0.25;
+      if (bubble.y < -bubble.radius) {
+        bubble.y = GAME_HEIGHT + bubble.radius;
+        bubble.x = Phaser.Math.Between(40, GAME_WIDTH - 40);
+      }
     });
   }
 
