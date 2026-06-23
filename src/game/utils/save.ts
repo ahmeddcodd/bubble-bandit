@@ -20,6 +20,16 @@ const fallback: SaveData = {
 let cache: SaveData = { ...fallback };
 let loaded = false;
 
+// Optional provider that folds in-progress run state into the snapshot right
+// before a flush, so a reload mid-run (e.g. on YouTube pause) doesn't lose the
+// coins/best-score earned so far. The active GameScene registers it; clearing
+// it (null) on shutdown avoids stale references.
+let progressProvider: (() => Partial<SaveData>) | null = null;
+
+export function setProgressProvider(fn: (() => Partial<SaveData>) | null): void {
+  progressProvider = fn;
+}
+
 function parse(raw: string): SaveData {
   if (!raw) return { ...fallback };
   try {
@@ -62,4 +72,15 @@ export function saveData(patch: Partial<SaveData>): void {
   cache = { ...cache, ...patch };
   if (!loaded) return;
   Playables.save(JSON.stringify(cache)).catch(() => Playables.logError());
+}
+
+/**
+ * Force an immediate persist of the current snapshot. Returns the save Promise
+ * so callers (e.g. an onPause handler) can await the flush before teardown.
+ * No-op until the initial load has completed.
+ */
+export function flushSave(): Promise<void> {
+  if (!loaded) return Promise.resolve();
+  if (progressProvider) cache = { ...cache, ...progressProvider() };
+  return Playables.save(JSON.stringify(cache)).catch(() => Playables.logError());
 }

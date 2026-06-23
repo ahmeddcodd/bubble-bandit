@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import './style.css';
 import { gameConfig } from './game/config';
-import { initSave } from './game/utils/save';
+import { initSave, flushSave } from './game/utils/save';
 import { audio } from './game/managers/AudioManager';
 import * as Playables from './game/managers/Playables';
 
@@ -40,7 +40,10 @@ window.addEventListener('load', async () => {
 
   // Pause: halt the whole Phaser loop (update + render, all scenes), silence
   // audio, show the overlay. MUST NOT use the Page Visibility API.
+  // YouTube pause is also the sanctioned "you may be torn down" signal, so we
+  // flush a cloud save here — this is what makes progress survive a reload.
   Playables.onPause(() => {
+    void flushSave();
     game.loop.sleep();
     audio.suspend();
     pauseOverlay.style.display = 'flex';

@@ -7,7 +7,7 @@ import { TowerManager } from '../managers/TowerManager';
 import { audio } from '../managers/AudioManager';
 import { BG, COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE, ZONES } from '../utils/constants';
 import { flash, lerpColor, ringPulse, shake } from '../utils/juice';
-import { getSave, saveData } from '../utils/save';
+import { getSave, saveData, setProgressProvider } from '../utils/save';
 
 interface RunStats {
   score: number;
@@ -41,6 +41,9 @@ export class GameScene extends Phaser.Scene {
   private rubies = 0;
   private timeAlive = 0;
   private isRunOver = false;
+  // Save snapshot captured at run start, so mid-run flushes compute
+  // baseline + run delta without double-counting what endRun already committed.
+  private saveBaseline = { bestScore: 0, totalCoins: 0, gamesPlayed: 0 };
   private pointerDownAt = 0;
   private activePointerX: number | null = null;
   private hasInteracted = false;
@@ -83,9 +86,24 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.cameras.main.fadeIn(220, 4, 12, 27);
 
+    // While a run is live, expose its progress so a flush (e.g. on YouTube
+    // pause / imminent reload) captures coins + best score earned this run.
+    // Computed from the run-start baseline + current deltas so it never
+    // double-counts what endRun has already committed. Once the run is over,
+    // endRun owns the save and the provider contributes nothing further.
+    this.saveBaseline = { ...getSave() };
+    setProgressProvider(() => {
+      if (this.isRunOver) return {};
+      return {
+        bestScore: Math.max(this.saveBaseline.bestScore, this.score),
+        totalCoins: this.saveBaseline.totalCoins + this.coins
+      };
+    });
+
     // Always silence the ambient pad + music when leaving the scene (covers Home /
     // restart paths that don't run endRun), so nothing leaks across scenes.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      setProgressProvider(null);
       audio.stopAmbient();
       audio.stopMusic();
     });
@@ -522,12 +540,13 @@ export class GameScene extends Phaser.Scene {
     audio.stopAmbient();
     audio.stopMusic();
 
-    const save = getSave();
-    const bestScore = Math.max(save.bestScore, this.score);
+    // Compute from the run-start baseline (not the live cache) so a mid-run
+    // pause-flush can't cause coins to be counted twice.
+    const bestScore = Math.max(this.saveBaseline.bestScore, this.score);
     saveData({
       bestScore,
-      totalCoins: save.totalCoins + this.coins,
-      gamesPlayed: save.gamesPlayed + 1
+      totalCoins: this.saveBaseline.totalCoins + this.coins,
+      gamesPlayed: this.saveBaseline.gamesPlayed + 1
     });
 
     const stats: RunStats = {
