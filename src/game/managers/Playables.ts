@@ -1,6 +1,7 @@
 // Thin wrapper around the YouTube Playables SDK (`ytgame` global). Every call is
-// guarded so the game runs identically outside the Playables environment (local
-// dev / Vercel), where the SDK is absent. This is the ONLY module that touches
+// guarded so the game runs identically outside a Playables session — whether the
+// SDK is absent (local dev) or present-but-not-in-session (the SDK script also
+// loads on ordinary hosts like Vercel). This is the ONLY module that touches
 // `ytgame` directly.
 
 function sdk(): YTGame | undefined {
