@@ -15,71 +15,85 @@ export function isPlayables(): boolean {
 
 // --- Lifecycle ------------------------------------------------------------
 
+// NOTE: every call below gates on isPlayables() (IN_PLAYABLES_ENV), NOT on the
+// mere presence of `ytgame`. The SDK script loads on ordinary web hosts too
+// (e.g. Vercel), where the real SDK methods misbehave outside a session — so we
+// must treat "SDK present but not in a Playables session" exactly like "absent".
+
 export function firstFrameReady(): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.game.firstFrameReady();
+    sdk()!.game.firstFrameReady();
   } catch {
-    /* no-op outside Playables */
+    /* no-op */
   }
 }
 
 export function gameReady(): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.game.gameReady();
+    sdk()!.game.gameReady();
   } catch {
-    /* no-op outside Playables */
+    /* no-op */
   }
 }
 
-// --- Cloud save (session-only fallback when SDK absent) -------------------
+// --- Cloud save (session-only fallback when not in Playables) -------------
 
 let memoryStore = '';
 
 export function load(): Promise<string> {
-  const s = sdk();
-  if (s) return s.game.loadData().catch(() => '');
-  return Promise.resolve(memoryStore);
+  if (!isPlayables()) return Promise.resolve(memoryStore);
+  return sdk()!.game.loadData().catch(() => '');
 }
 
 export function save(data: string): Promise<void> {
-  const s = sdk();
-  if (s) return s.game.saveData(data);
-  memoryStore = data;
-  return Promise.resolve();
+  if (!isPlayables()) {
+    memoryStore = data;
+    return Promise.resolve();
+  }
+  return sdk()!.game.saveData(data);
 }
 
 // --- System callbacks -----------------------------------------------------
 
 export function onPause(callback: () => void): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.system.onPause(callback);
+    sdk()!.system.onPause(callback);
   } catch {
     /* no-op */
   }
 }
 
 export function onResume(callback: () => void): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.system.onResume(callback);
+    sdk()!.system.onResume(callback);
   } catch {
     /* no-op */
   }
 }
 
-/** Outside Playables audio is always considered enabled. */
+/**
+ * Outside a real Playables session audio is always enabled. We gate on
+ * isPlayables() (IN_PLAYABLES_ENV) — NOT mere presence of `ytgame` — because the
+ * SDK script also loads on plain web hosts (e.g. Vercel) where
+ * `system.isAudioEnabled()` returns false and would wrongly mute the game.
+ */
 export function isAudioEnabled(): boolean {
-  const s = sdk();
-  if (!s) return true;
+  if (!isPlayables()) return true;
   try {
-    return s.system.isAudioEnabled();
+    return sdk()!.system.isAudioEnabled();
   } catch {
     return true;
   }
 }
 
 export function onAudioEnabledChange(callback: (enabled: boolean) => void): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.system.onAudioEnabledChange(callback);
+    sdk()!.system.onAudioEnabledChange(callback);
   } catch {
     /* no-op */
   }
@@ -88,8 +102,9 @@ export function onAudioEnabledChange(callback: (enabled: boolean) => void): void
 // --- Health logging -------------------------------------------------------
 
 export function logError(): void {
+  if (!isPlayables()) return;
   try {
-    sdk()?.health.logError();
+    sdk()!.health.logError();
   } catch {
     /* no-op */
   }
