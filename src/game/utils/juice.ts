@@ -27,13 +27,6 @@ export function shake(scene: Phaser.Scene, preset: ShakePreset): void {
 }
 
 /**
- * Hit-stop is implemented in GameScene itself (it integrates movement manually
- * off `delta`, so freezing means skipping that integration for a few frames —
- * see `GameScene.hitStopUntil`). Kept out of here to avoid fighting Phaser's
- * tween/time clocks. The visual helpers below are pure and scene-agnostic.
- */
-
-/**
  * Full-screen colour flash that fades and auto-destroys. Used for pop (red) and
  * shield save (cyan). Lives above gameplay but below nothing critical.
  */

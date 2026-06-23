@@ -47,9 +47,6 @@ export class GameScene extends Phaser.Scene {
   private pointerDownAt = 0;
   private activePointerX: number | null = null;
   private hasInteracted = false;
-  // Real-time timestamp (ms) until which gameplay integration is frozen for a
-  // brief "punch". The manual game loop honours this; tween/audio keep running.
-  private hitStopUntil = 0;
 
   private scoreText!: Phaser.GameObjects.Text;
   private comboText!: Phaser.GameObjects.Text;
@@ -111,13 +108,6 @@ export class GameScene extends Phaser.Scene {
 
   update(_: number, delta: number): void {
     if (this.isRunOver) return;
-
-    // Hit-stop: freeze the manual simulation for a few frames so impacts land.
-    // Background still drifts subtly so the screen never looks fully dead.
-    if (this.time.now < this.hitStopUntil) {
-      this.scrollBackground(delta * 0.15);
-      return;
-    }
 
     this.timeAlive += delta / 1000;
     this.scrollBackground(delta);
@@ -183,7 +173,6 @@ export class GameScene extends Phaser.Scene {
     this.pointerDownAt = 0;
     this.activePointerX = null;
     this.hasInteracted = false;
-    this.hitStopUntil = 0;
     this.floatPool = [];
     this.floatIndex = 0;
     this.bannerPool = [];
@@ -474,11 +463,6 @@ export class GameScene extends Phaser.Scene {
     if (punch > 0 || comboBoost > 0.5) {
       ringPulse(this, item.x, item.y, item.radius + 6, tint);
     }
-    // Hit-stop only on rubies (rare, single-spawn). Pearls arrive in rows of 5,
-    // so hit-stopping each would freeze the loop repeatedly and feel like lag.
-    if (item.type === 'ruby') {
-      this.hitStop(JUICE.hitStop.rich);
-    }
 
     this.showFloatText(`+${result.score}`, item.x, item.y - 12, item.type === 'ruby' ? '#ff6d8a' : '#ffffff', 22 + comboBoost * 8);
     if (result.message) this.showComboBanner(result.message);
@@ -667,13 +651,5 @@ export class GameScene extends Phaser.Scene {
     audio.ensure();
     audio.startAmbient();
     audio.startMusic();
-  }
-
-  // Freeze the manual simulation for `ms` of real time. The update loop checks
-  // `hitStopUntil` and skips integration while frozen. Ignored if a freeze is
-  // already in progress so rapid collects can't stack into a long stall.
-  private hitStop(ms: number): void {
-    if (this.time.now < this.hitStopUntil) return;
-    this.hitStopUntil = this.time.now + ms;
   }
 }

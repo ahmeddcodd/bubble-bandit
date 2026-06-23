@@ -57,9 +57,6 @@ export const JUICE = {
     medium: { intensity: 0.008, duration: 150 },
     pop: { intensity: 0.013, duration: 280 }
   },
-  hitStop: {
-    rich: 70
-  },
   flash: {
     popColor: 0xff3c67,
     popAlpha: 0.42,
