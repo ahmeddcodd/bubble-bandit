@@ -1,4 +1,4 @@
-import { SAVE_KEY } from './constants';
+import * as Playables from '../managers/Playables';
 
 export interface SaveData {
   bestScore: number;
@@ -12,10 +12,17 @@ const fallback: SaveData = {
   gamesPlayed: 0
 };
 
-export function loadSave(): SaveData {
+// Cloud-only store. All persistence goes through the YouTube Playables cloud
+// (Playables.load/save); there is no localStorage. A cached snapshot backs the
+// synchronous getSave() so scenes can render immediately, while writes are
+// gated on the initial load completing — the SDK rejects saveData before
+// loadData has resolved.
+let cache: SaveData = { ...fallback };
+let loaded = false;
+
+function parse(raw: string): SaveData {
+  if (!raw) return { ...fallback };
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return { ...fallback };
     const data = JSON.parse(raw) as Partial<SaveData>;
     return {
       bestScore: Number(data.bestScore ?? 0),
@@ -27,10 +34,32 @@ export function loadSave(): SaveData {
   }
 }
 
-export function saveData(data: SaveData): void {
+/**
+ * Load the cloud snapshot once at boot. MUST resolve before any saveData call
+ * is allowed to reach the SDK. Tolerant of empty / old-shape payloads.
+ */
+export async function initSave(): Promise<SaveData> {
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    cache = parse(await Playables.load());
   } catch {
-    // localStorage can be blocked in embedded browsers. The game still runs.
+    cache = { ...fallback };
   }
+  loaded = true;
+  return cache;
+}
+
+/** Synchronous read of the cached snapshot (safe to call from scene create). */
+export function getSave(): SaveData {
+  return cache;
+}
+
+/**
+ * Merge a patch into the snapshot and persist it. No-ops the cloud write until
+ * the initial load has completed (per the SDK's await-loadData-first rule); the
+ * cache still updates so in-session reads stay correct.
+ */
+export function saveData(patch: Partial<SaveData>): void {
+  cache = { ...cache, ...patch };
+  if (!loaded) return;
+  Playables.save(JSON.stringify(cache)).catch(() => Playables.logError());
 }

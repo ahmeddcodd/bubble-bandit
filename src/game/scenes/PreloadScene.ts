@@ -17,7 +17,10 @@ export class PreloadScene extends Phaser.Scene {
 
   private createTextures(): void {
     this.createBubbleTexture();
-    this.createThiefTexture();
+    // Base 'thief' face plus mood variants the player swaps between by state.
+    this.createThiefTexture('thief', 'neutral');
+    this.createThiefTexture('thief-greed', 'greed');
+    this.createThiefTexture('thief-scared', 'scared');
     this.createGemTexture('gem-blue', COLORS.cyan, COLORS.cyanDark, 44, 52);
     this.createGemTexture('gem-ruby', COLORS.ruby, COLORS.rubyDark, 48, 58);
     this.createPearlTexture();
@@ -58,9 +61,10 @@ export class PreloadScene extends Phaser.Scene {
     });
   }
 
-  private createThiefTexture(): void {
+  private createThiefTexture(key: string, mood: 'neutral' | 'greed' | 'scared'): void {
     this.withGraphics((g) => {
       g.clear();
+      // Body, hat, mask band, skin — identical across moods.
       g.fillStyle(0x111827, 1);
       g.fillRoundedRect(23, 25, 50, 64, 20);
       g.fillStyle(0x222a3a, 1);
@@ -72,21 +76,48 @@ export class PreloadScene extends Phaser.Scene {
       g.fillRoundedRect(28, 34, 40, 38, 14);
       g.fillStyle(0x111827, 1);
       g.fillRoundedRect(25, 30, 46, 19, 9);
+
+      // Eyes — wider/brighter for greed, smaller + worried for scared.
+      const eyeR = mood === 'greed' ? 6 : mood === 'scared' ? 5 : 4;
+      const pupilR = mood === 'greed' ? 3 : 2;
       g.fillStyle(COLORS.white, 1);
-      g.fillCircle(39, 54, 4);
-      g.fillCircle(57, 54, 4);
+      g.fillCircle(39, 54, eyeR);
+      g.fillCircle(57, 54, eyeR);
       g.fillStyle(0x121827, 1);
-      g.fillCircle(40, 54, 2);
-      g.fillCircle(58, 54, 2);
-      g.lineStyle(3, 0x5b2b1e, 1);
-      g.beginPath();
-      g.arc(49, 63, 8, Phaser.Math.DegToRad(18), Phaser.Math.DegToRad(162));
-      g.strokePath();
+      g.fillCircle(40, 54, pupilR);
+      g.fillCircle(58, 54, pupilR);
+      if (mood === 'greed') {
+        // Dollar-sign glint: tiny gold sparkles in the eyes.
+        g.fillStyle(COLORS.gold, 1);
+        g.fillCircle(41, 52, 1.4);
+        g.fillCircle(59, 52, 1.4);
+      }
+
+      // Mouth.
+      if (mood === 'greed') {
+        // Big open grin.
+        g.fillStyle(0x5b2b1e, 1);
+        g.fillEllipse(49, 64, 18, 11);
+        g.fillStyle(COLORS.white, 1);
+        g.fillRoundedRect(42, 59, 14, 4, 2);
+      } else if (mood === 'scared') {
+        // Small worried 'o'.
+        g.fillStyle(0x5b2b1e, 1);
+        g.fillCircle(49, 65, 4);
+      } else {
+        // Neutral smile.
+        g.lineStyle(3, 0x5b2b1e, 1);
+        g.beginPath();
+        g.arc(49, 63, 8, Phaser.Math.DegToRad(18), Phaser.Math.DegToRad(162));
+        g.strokePath();
+      }
+
+      // Gold tooth/coin accent.
       g.fillStyle(COLORS.gold, 1);
       g.fillCircle(48, 82, 8);
       g.lineStyle(2, 0xfff1b0, 0.9);
       g.strokeCircle(48, 82, 5);
-      g.generateTexture('thief', 96, 104);
+      g.generateTexture(key, 96, 104);
     });
   }
 

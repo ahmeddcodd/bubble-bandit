@@ -7,7 +7,7 @@ import { TowerManager } from '../managers/TowerManager';
 import { audio } from '../managers/AudioManager';
 import { BG, COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE, ZONES } from '../utils/constants';
 import { flash, lerpColor, ringPulse, shake } from '../utils/juice';
-import { loadSave, saveData } from '../utils/save';
+import { getSave, saveData } from '../utils/save';
 
 interface RunStats {
   score: number;
@@ -117,7 +117,35 @@ export class GameScene extends Phaser.Scene {
     this.updateHazards(delta);
     this.checkCollectibles();
     this.checkHazards();
+    this.updateThiefMood();
     this.updateUi();
+  }
+
+  // Drive the thief's expression: fear when a hazard is close, greed when the
+  // bubble is large (lots of loot in reach), otherwise neutral. Fear wins.
+  private updateThiefMood(): void {
+    const px = this.player.x;
+    const py = this.player.y;
+    const dangerBand = this.player.getHitRadius() + 70;
+    let danger = false;
+
+    for (const hazard of this.spikeOrbs) {
+      if (Phaser.Math.Distance.Between(px, py, hazard.x, hazard.y) <= dangerBand + hazard.radius) {
+        danger = true;
+        break;
+      }
+    }
+    if (!danger) {
+      for (const laser of this.lasers) {
+        // Only worrying once it's armed and vertically near.
+        if (laser.active && Math.abs(laser.y - py) <= dangerBand) {
+          danger = true;
+          break;
+        }
+      }
+    }
+
+    this.player.setMood(danger ? 'scared' : this.player.isLarge() ? 'greed' : 'neutral');
   }
 
   private resetRunState(): void {
@@ -250,7 +278,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createUi(): void {
-    const save = loadSave();
+    const save = getSave();
     this.scoreText = this.add.text(28, 26, '0', {
       fontFamily: 'Arial Black, Impact, sans-serif',
       fontSize: '42px',
@@ -494,7 +522,7 @@ export class GameScene extends Phaser.Scene {
     audio.stopAmbient();
     audio.stopMusic();
 
-    const save = loadSave();
+    const save = getSave();
     const bestScore = Math.max(save.bestScore, this.score);
     saveData({
       bestScore,

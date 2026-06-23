@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH } from '../utils/constants';
 import { audio } from '../managers/AudioManager';
-import { loadSave } from '../utils/save';
+import { getSave } from '../utils/save';
+import * as Playables from '../managers/Playables';
 
 export class MainMenuScene extends Phaser.Scene {
   private floatingBits: Phaser.GameObjects.Image[] = [];
@@ -17,6 +18,10 @@ export class MainMenuScene extends Phaser.Scene {
     this.createHeroBubble();
     this.createPlayButton();
     this.input.keyboard?.once('keydown-SPACE', () => this.startGame());
+
+    // The interactive menu is up — safe to tell YouTube the game is ready
+    // (this hides YouTube's loading spinner). Must NOT be called earlier.
+    Playables.gameReady();
   }
 
   update(_: number, delta: number): void {
@@ -97,7 +102,7 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   private createPlayButton(): void {
-    const save = loadSave();
+    const save = getSave();
     const hint = this.add.text(GAME_WIDTH / 2, 655, 'Hold anywhere to inflate. Release to shrink.', {
       fontFamily: 'Arial, sans-serif',
       fontSize: '24px',

@@ -25,6 +25,12 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
   // the per-frame setScale so it isn't overwritten by the wobble.
   private collectSquash = 0;
 
+  // Thief mood — swaps the baked face texture and drives pose reactions.
+  private mood: 'neutral' | 'greed' | 'scared' = 'neutral';
+  private sweat: Phaser.GameObjects.Arc;
+  // Decaying "happy collect" pop, blended into the thief's vertical bob.
+  private collectHop = 0;
+
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y);
     scene.add.existing(this);
@@ -33,8 +39,11 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
     this.glow = scene.add.circle(0, 0, 58, 0x76eaff, 0.16);
     this.bubble = scene.add.image(0, 0, 'bubble');
     this.thief = scene.add.image(0, 6, 'thief').setScale(0.63);
+    // Sweat drop near the thief's temple; only visible when scared.
+    this.sweat = scene.add.circle(11, -2, 3, 0x9fe4ff, 0.95).setVisible(false);
+    this.sweat.setStrokeStyle(1, 0xffffff, 0.6);
 
-    this.add([this.shadow, this.glow, this.bubble, this.thief]);
+    this.add([this.shadow, this.glow, this.bubble, this.thief, this.sweat]);
     this.setDepth(100);
 
     // Pre-create a tiny trail pool (added to the scene, behind the bubble).
@@ -118,10 +127,39 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
 
     this.shadow.setScale(Phaser.Math.Linear(0.66, 1.45, (this.bubbleScale - PLAYER.minScale) / (PLAYER.maxScale - PLAYER.minScale)), 1);
     this.shadow.setAlpha(Phaser.Math.Linear(0.1, 0.28, (this.bubbleScale - PLAYER.minScale) / (PLAYER.maxScale - PLAYER.minScale)));
-    this.thief.setY(8 + Math.sin(this.pulse * 5) * 2);
-    this.thief.setAngle(Math.sin(this.pulse * 2.4) * 3);
+
+    // Mood-driven pose. Collect "hop" decays and lifts the thief on each grab.
+    this.collectHop = Math.max(0, this.collectHop - dt * 5.2);
+    const hop = -this.collectHop * 6;
+    if (this.mood === 'scared') {
+      // Cower lower + fast nervous tremble.
+      this.thief.setY(11 + Math.sin(this.pulse * 22) * 1.6 + hop);
+      this.thief.setAngle(Math.sin(this.pulse * 26) * 2.4);
+    } else if (this.mood === 'greed') {
+      // Eager faster, springier bob.
+      this.thief.setY(8 + Math.sin(this.pulse * 8) * 3 + hop);
+      this.thief.setAngle(Math.sin(this.pulse * 3.4) * 4);
+    } else {
+      this.thief.setY(8 + Math.sin(this.pulse * 5) * 2 + hop);
+      this.thief.setAngle(Math.sin(this.pulse * 2.4) * 3);
+    }
+    if (this.sweat.visible) {
+      this.sweat.y = -2 + Math.sin(this.pulse * 9) * 1.5;
+      this.sweat.setAlpha(0.6 + Math.sin(this.pulse * 14) * 0.35);
+    }
 
     this.updateTrail(deltaMs);
+  }
+
+  /**
+   * Set the thief's mood. Swaps the baked face texture only on change (cheap),
+   * and toggles the sweat drop. Fear overrides greed (handled by the caller).
+   */
+  setMood(mood: 'neutral' | 'greed' | 'scared'): void {
+    if (mood === this.mood) return;
+    this.mood = mood;
+    this.thief.setTexture(mood === 'greed' ? 'thief-greed' : mood === 'scared' ? 'thief-scared' : 'thief');
+    this.sweat.setVisible(mood === 'scared');
   }
 
   /** Emit a faded bubble bit at intervals while rising fast. Pool-based, no allocs. */
@@ -164,6 +202,8 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
    */
   onCollect(punch: number): void {
     this.collectSquash = Math.min(0.26, this.collectSquash + 0.1 + punch * 0.14);
+    // Happy little hop on every grab, bigger for high-value loot.
+    this.collectHop = Math.min(1.4, this.collectHop + 0.7 + punch * 0.5);
   }
 
   getHitRadius(): number {
@@ -204,6 +244,7 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
     this.bubble.setVisible(false);
     this.glow.setVisible(false);
     this.shadow.setVisible(false);
+    this.sweat.setVisible(false);
     this.thief.setAngle(0);
     this.scene.tweens.add({ targets: this.thief, y: this.thief.y + 92, angle: 720, alpha: 0, duration: 740, ease: 'Back.in' });
   }

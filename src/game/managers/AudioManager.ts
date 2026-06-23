@@ -1,4 +1,7 @@
 import { CollectibleType } from '../objects/Collectible';
+import * as Playables from './Playables';
+
+const MASTER_LEVEL = 0.9;
 
 /**
  * Lightweight WebAudio sound layer. No asset files — everything is synthesised,
@@ -9,10 +12,12 @@ import { CollectibleType } from '../objects/Collectible';
 export class AudioManager {
   private ctx?: AudioContext;
   private master?: GainNode;
+  private muted = false;
+  private audioWired = false;
 
-  // Persistent ambient pad nodes (created once, stopped on cleanup).
-  private ambientOscA?: OscillatorNode;
-  private ambientOscB?: OscillatorNode;
+  // Ambient "air" wash — looping filtered noise (NOT tonal oscillators, which
+  // hum/rattle on small speakers). Created once, stopped on cleanup.
+  private ambientSrc?: AudioBufferSourceNode;
   private ambientGain?: GainNode;
   private ambientStarted = false;
 
@@ -20,6 +25,7 @@ export class AudioManager {
   // scheduler queues notes a little ahead of the audio clock so the loop stays
   // tight regardless of JS timer jitter.
   private musicGain?: GainNode;
+  private musicFilter?: BiquadFilterNode;
   private musicStarted = false;
   private musicTimer?: number;
   private nextNoteTime = 0;
@@ -35,10 +41,48 @@ export class AudioManager {
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.9;
-      this.master.connect(this.ctx.destination);
+      // Honour YouTube's mute setting from the very first sound.
+      this.muted = !Playables.isAudioEnabled();
+      this.master.gain.value = this.muted ? 0 : MASTER_LEVEL;
+      // A gentle limiter on the master bus catches summed peaks (pad + music +
+      // SFX) before they clip into harsh buzzing.
+      const limiter = this.ctx.createDynamicsCompressor();
+      limiter.threshold.value = -10;
+      limiter.knee.value = 24;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.25;
+      this.master.connect(limiter);
+      limiter.connect(this.ctx.destination);
     }
+    // Subscribe once to YouTube mute changes — YouTube mute always wins.
+    if (!this.audioWired) {
+      this.audioWired = true;
+      Playables.onAudioEnabledChange((enabled) => this.setMuted(!enabled));
+    }
+    if (this.muted) return; // don't resume output while YouTube has us muted
     void this.ctx.resume();
+  }
+
+  /** Mute/unmute in lockstep with YouTube. Ramped to avoid clicks. */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (!this.ctx || !this.master) return;
+    const now = this.ctx.currentTime;
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setValueAtTime(this.master.gain.value, now);
+    this.master.gain.linearRampToValueAtTime(muted ? 0 : MASTER_LEVEL, now + 0.05);
+  }
+
+  /** Suspend all audio output (YouTube pause). */
+  suspend(): void {
+    void this.ctx?.suspend();
+  }
+
+  /** Resume audio output after a YouTube pause, unless muted. */
+  resume(): void {
+    if (this.muted) return;
+    void this.ctx?.resume();
   }
 
   private get ready(): boolean {
@@ -149,29 +193,45 @@ export class AudioManager {
     this.tone(660, 0.05, 'sine', 0.025, 0.015);
   }
 
-  /** Quiet, slowly-detuning pad that gives the tower a sense of place. */
+  /**
+   * Soft ambient "air" — a loop of heavily-lowpassed pink-ish noise. Noise has
+   * no pitch, so unlike a sustained sine pad it can never hum or rattle on a
+   * phone speaker; it just reads as a faint room tone behind the music.
+   */
   startAmbient(): void {
     if (this.ambientStarted || !this.ready) return;
     const ctx = this.ctx!;
     this.ambientStarted = true;
 
+    // 2s of smoothed (low-frequency) noise, looped.
+    const frames = ctx.sampleRate * 2;
+    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < frames; i += 1) {
+      const white = Math.random() * 2 - 1;
+      // One-pole lowpass on the noise itself → smooth, wind-like, no hiss.
+      last = last * 0.985 + white * 0.015;
+      data[i] = last;
+    }
+
+    this.ambientSrc = ctx.createBufferSource();
+    this.ambientSrc.buffer = buffer;
+    this.ambientSrc.loop = true;
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 500;
+    lp.Q.value = 0.1;
+
     this.ambientGain = ctx.createGain();
     this.ambientGain.gain.value = 0.0001;
-    this.ambientGain.gain.exponentialRampToValueAtTime(0.012, ctx.currentTime + 2.5);
+    this.ambientGain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 2.5);
+
+    this.ambientSrc.connect(lp);
+    lp.connect(this.ambientGain);
     this.ambientGain.connect(this.master!);
-
-    this.ambientOscA = ctx.createOscillator();
-    this.ambientOscA.type = 'sine';
-    this.ambientOscA.frequency.value = 110;
-
-    this.ambientOscB = ctx.createOscillator();
-    this.ambientOscB.type = 'sine';
-    this.ambientOscB.frequency.value = 110.7; // slight detune → slow beating
-
-    this.ambientOscA.connect(this.ambientGain);
-    this.ambientOscB.connect(this.ambientGain);
-    this.ambientOscA.start();
-    this.ambientOscB.start();
+    this.ambientSrc.start();
   }
 
   stopAmbient(): void {
@@ -180,12 +240,10 @@ export class AudioManager {
     if (this.ambientGain) {
       this.ambientGain.gain.cancelScheduledValues(now);
       this.ambientGain.gain.setValueAtTime(Math.max(this.ambientGain.gain.value, 0.0001), now);
-      this.ambientGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      this.ambientGain.gain.linearRampToValueAtTime(0.0001, now + 0.5);
     }
-    this.ambientOscA?.stop(now + 0.6);
-    this.ambientOscB?.stop(now + 0.6);
-    this.ambientOscA = undefined;
-    this.ambientOscB = undefined;
+    this.ambientSrc?.stop(now + 0.6);
+    this.ambientSrc = undefined;
     this.ambientGain = undefined;
     this.ambientStarted = false;
   }
@@ -196,10 +254,12 @@ export class AudioManager {
   // thief vibe. It sits quietly under the SFX so collects/pops still cut through.
 
   // Note frequencies (Hz). Bass line and the bubbly arpeggio, one entry per
-  // 16th step; null = rest. Tuned to A minor pentatonic (A C D E G).
+  // 16th step; null = rest. Tuned to A minor pentatonic (A C D E G). Bass sits
+  // around A2 so it reproduces cleanly on phone speakers (sub-bass below ~80Hz
+  // distorts into buzz on small drivers).
   private static readonly BASS: (number | null)[] = [
-    55.0, null, 55.0, null, 82.41, null, 73.42, null,
-    65.41, null, 65.41, null, 49.0, null, 55.0, null
+    110.0, null, 110.0, null, 164.81, null, 146.83, null,
+    130.81, null, 130.81, null, 98.0, null, 110.0, null
   ];
   private static readonly LEAD: (number | null)[] = [
     440.0, 523.25, 659.25, 523.25, 587.33, 659.25, 783.99, 659.25,
@@ -215,7 +275,13 @@ export class AudioManager {
     this.musicGain.gain.value = 0.0001;
     // Gentle fade-in so it eases under the action rather than snapping on.
     this.musicGain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 1.6);
-    this.musicGain.connect(this.master!);
+    // Lowpass rounds off the buzzy high harmonics so the loop reads as warm.
+    this.musicFilter = ctx.createBiquadFilter();
+    this.musicFilter.type = 'lowpass';
+    this.musicFilter.frequency.value = 1800;
+    this.musicFilter.Q.value = 0.4;
+    this.musicGain.connect(this.musicFilter);
+    this.musicFilter.connect(this.master!);
 
     this.step = 0;
     this.nextNoteTime = ctx.currentTime + 0.08;
@@ -236,6 +302,8 @@ export class AudioManager {
       this.musicGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
       this.musicGain.disconnect();
     }
+    this.musicFilter?.disconnect();
+    this.musicFilter = undefined;
     this.musicGain = undefined;
     this.musicStarted = false;
   }
@@ -252,32 +320,54 @@ export class AudioManager {
       const t = this.nextNoteTime + swing;
 
       const bass = AudioManager.BASS[i];
-      if (bass !== null) this.musicNote(bass, secondsPerStep * 2.4, 'triangle', 0.5, t);
+      // Sine (not triangle) + duration under the 2-step gap so consecutive bass
+      // notes don't overlap and phase-beat into a buzz.
+      if (bass !== null) this.musicNote(bass, secondsPerStep * 1.7, 'sine', 0.42, t);
 
       const lead = AudioManager.LEAD[i];
       // Drop a few lead notes so it breathes instead of machine-gunning.
-      if (lead !== null && i % 4 !== 3) this.musicNote(lead, secondsPerStep * 1.5, 'sine', 0.22, t);
+      if (lead !== null && i % 4 !== 3) this.musicNote(lead, secondsPerStep * 1.3, 'sine', 0.18, t);
 
       this.nextNoteTime += secondsPerStep;
       this.step += 1;
     }
   }
 
-  /** A single music note routed through the (quiet) music bus. */
+  /**
+   * A single music note routed through the (quiet) music bus. Uses a smooth
+   * linear attack and a `setTargetAtTime` exponential release so the note fades
+   * fully to silence before the oscillator stops — no hard cut, no phase-0
+   * restart click, no sustained buzz. A per-note lowpass softens the timbre.
+   */
   private musicNote(freq: number, duration: number, type: OscillatorType, gain: number, when: number): void {
     if (!this.ready || !this.musicGain) return;
     const ctx = this.ctx!;
+    // Never schedule in the past (late timer ticks would bunch notes → buzz).
+    const start = Math.max(when, ctx.currentTime + 0.005);
+
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = Math.min(freq * 4 + 600, 3500);
+    lp.Q.value = 0.2;
+
     osc.type = type;
     osc.frequency.value = freq;
-    g.gain.setValueAtTime(0.0001, when);
-    g.gain.exponentialRampToValueAtTime(gain, when + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+
+    const attack = 0.02;
+    const releaseTau = duration * 0.35; // time-constant for the exponential tail
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(gain, start + attack);
+    // Begin an exponential decay toward 0 after a short sustain.
+    g.gain.setTargetAtTime(0, start + duration * 0.5, releaseTau);
+
     osc.connect(g);
-    g.connect(this.musicGain);
-    osc.start(when);
-    osc.stop(when + duration + 0.03);
+    g.connect(lp);
+    lp.connect(this.musicGain);
+    osc.start(start);
+    // Stop well after the release tail has decayed to inaudible.
+    osc.stop(start + duration + releaseTau * 4 + 0.05);
   }
 }
 
