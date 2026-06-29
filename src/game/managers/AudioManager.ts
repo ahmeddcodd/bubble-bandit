@@ -30,7 +30,8 @@ export class AudioManager {
   private musicTimer?: number;
   private nextNoteTime = 0;
   private step = 0;
-  private readonly bpm = 96;
+  // Slow + sparse for a moody, atmospheric bed rather than a busy tune.
+  private readonly bpm = 60;
 
   /** Call from any user-gesture handler. Safe to call repeatedly. */
   ensure(): void {
@@ -226,7 +227,8 @@ export class AudioManager {
 
     this.ambientGain = ctx.createGain();
     this.ambientGain.gain.value = 0.0001;
-    this.ambientGain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 2.5);
+    // Faint now — the synth pad carries the atmosphere; this is just subtle air.
+    this.ambientGain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 3);
 
     this.ambientSrc.connect(lp);
     lp.connect(this.ambientGain);
@@ -249,21 +251,20 @@ export class AudioManager {
   }
 
   // --- Background music -----------------------------------------------------
-  // A looping, lightly-swung groove: a walking bass + a bouncy plucked arpeggio
-  // in A minor pentatonic — playful and a little sneaky, matching the bubble
-  // thief vibe. It sits quietly under the SFX so collects/pops still cut through.
+  // A moody, modern electronic bed — warm detuned-saw synth pads through a
+  // resonant lowpass (analog-style), a soft sub bass pulse, and an airy filter
+  // sweep so it breathes. Dark minor harmony with 7th/9th colour. Deliberately
+  // NOT pure sine bells/pentatonic, which read as childish.
+  //
+  // 32 steps per loop at 60 BPM = 8s. Chord changes each 8-step bar.
 
-  // Note frequencies (Hz). Bass line and the bubbly arpeggio, one entry per
-  // 16th step; null = rest. Tuned to A minor pentatonic (A C D E G). Bass sits
-  // around A2 so it reproduces cleanly on phone speakers (sub-bass below ~80Hz
-  // distorts into buzz on small drivers).
-  private static readonly BASS: (number | null)[] = [
-    110.0, null, 110.0, null, 164.81, null, 146.83, null,
-    130.81, null, 130.81, null, 98.0, null, 110.0, null
-  ];
-  private static readonly LEAD: (number | null)[] = [
-    440.0, 523.25, 659.25, 523.25, 587.33, 659.25, 783.99, 659.25,
-    523.25, 659.25, 587.33, 523.25, 440.0, 523.25, 392.0, 329.63
+  // Chord per bar as semitone offsets from the bar root (A minor family with
+  // added colour tones): Am9, Fmaj7, Cadd9, Em7. Intervals are voiced low+wide.
+  private static readonly CHORDS: { root: number; intervals: number[] }[] = [
+    { root: 110.0, intervals: [0, 7, 10, 14] }, // A2: A E G B   (Am7/9)
+    { root: 87.31, intervals: [0, 7, 11, 16] }, // F2: F C E A   (Fmaj7)
+    { root: 130.81, intervals: [0, 7, 14, 16] }, // C3: C G D E  (Cadd9)
+    { root: 98.0, intervals: [0, 7, 10, 14] }   // G2: G D F A   (Gm-ish color)
   ];
 
   startMusic(): void {
@@ -273,13 +274,15 @@ export class AudioManager {
 
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = 0.0001;
-    // Gentle fade-in so it eases under the action rather than snapping on.
-    this.musicGain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 1.6);
-    // Lowpass rounds off the buzzy high harmonics so the loop reads as warm.
+    // Drift in to a clearly-audible level (master + limiter give headroom).
+    this.musicGain.gain.linearRampToValueAtTime(0.16, ctx.currentTime + 2.5);
+
+    // Shared resonant lowpass that slowly sweeps open/closed — the "breathing"
+    // analog character. Modulated per-bar in scheduleMusic.
     this.musicFilter = ctx.createBiquadFilter();
     this.musicFilter.type = 'lowpass';
-    this.musicFilter.frequency.value = 1800;
-    this.musicFilter.Q.value = 0.4;
+    this.musicFilter.frequency.value = 700;
+    this.musicFilter.Q.value = 6; // resonance → richer, more "synth" timbre
     this.musicGain.connect(this.musicFilter);
     this.musicFilter.connect(this.master!);
 
@@ -309,24 +312,49 @@ export class AudioManager {
   }
 
   private scheduleMusic(): void {
-    if (!this.ready || !this.musicGain) return;
+    if (!this.ready || !this.musicGain || !this.musicFilter) return;
     const ctx = this.ctx!;
     const secondsPerStep = 60 / this.bpm / 4; // 16th notes
+    const semi = (n: number) => Math.pow(2, n / 12);
 
     while (this.nextNoteTime < ctx.currentTime + 0.12) {
-      const i = this.step % 16;
-      // Light swing: nudge the off-beat 16ths slightly later for groove.
-      const swing = i % 2 === 1 ? secondsPerStep * 0.12 : 0;
-      const t = this.nextNoteTime + swing;
+      const i = this.step % 32;
+      const t = this.nextNoteTime;
+      const barLen = secondsPerStep * 8;
+      const barIndex = Math.floor(i / 8);
+      const chord = AudioManager.CHORDS[barIndex % AudioManager.CHORDS.length];
 
-      const bass = AudioManager.BASS[i];
-      // Sine (not triangle) + duration under the 2-step gap so consecutive bass
-      // notes don't overlap and phase-beat into a buzz.
-      if (bass !== null) this.musicNote(bass, secondsPerStep * 1.7, 'sine', 0.42, t);
+      // New chord each 8-step bar: pad body + sub-bass + filter breath.
+      if (i % 8 === 0) {
+        // Warm detuned-saw pad voicing the chord — the main atmospheric body.
+        for (const iv of chord.intervals) {
+          this.padVoice(chord.root * semi(iv), barLen * 1.1, 0.05, t);
+        }
 
-      const lead = AudioManager.LEAD[i];
-      // Drop a few lead notes so it breathes instead of machine-gunning.
-      if (lead !== null && i % 4 !== 3) this.musicNote(lead, secondsPerStep * 1.3, 'sine', 0.18, t);
+        // Soft sub-bass pulse on the root — grounds it, modern feel (not bells).
+        this.padVoice(chord.root * 0.5, barLen * 0.9, 0.1, t, true);
+
+        // Per-bar filter sweep: open then settle, so the pad "breathes".
+        const f = this.musicFilter.frequency;
+        f.cancelScheduledValues(t);
+        f.setValueAtTime(620, t);
+        f.linearRampToValueAtTime(1600, t + barLen * 0.45);
+        f.linearRampToValueAtTime(700, t + barLen);
+      }
+
+      // Gentle pulsing bass on the half-bar (steps 0 and 4) for a soft heartbeat
+      // — gives motion without a busy beat.
+      if (i % 4 === 0) {
+        this.padVoice(chord.root, secondsPerStep * 2.2, 0.07, t, true);
+      }
+
+      // Soft arpeggio: a chord tone every 2 steps, rising through the voicing an
+      // octave up. Plucky (short) detuned-saw — movement in the mature timbre,
+      // not a sine bell.
+      if (i % 2 === 0) {
+        const iv = chord.intervals[(i / 2) % chord.intervals.length];
+        this.arpVoice(chord.root * semi(iv) * 2, secondsPerStep * 1.6, 0.045, t);
+      }
 
       this.nextNoteTime += secondsPerStep;
       this.step += 1;
@@ -334,41 +362,68 @@ export class AudioManager {
   }
 
   /**
-   * A single music note routed through the (quiet) music bus. Uses a smooth
-   * linear attack and a `setTargetAtTime` exponential release so the note fades
-   * fully to silence before the oscillator stops — no hard cut, no phase-0
-   * restart click, no sustained buzz. A per-note lowpass softens the timbre.
+   * A short, plucky detuned-saw voice for the arpeggio — same warm timbre as the
+   * pad but with a quick attack and shorter tail so it adds gentle rhythmic
+   * movement over the sustained chord.
    */
-  private musicNote(freq: number, duration: number, type: OscillatorType, gain: number, when: number): void {
+  private arpVoice(freq: number, duration: number, gain: number, when: number): void {
     if (!this.ready || !this.musicGain) return;
     const ctx = this.ctx!;
-    // Never schedule in the past (late timer ticks would bunch notes → buzz).
     const start = Math.max(when, ctx.currentTime + 0.005);
-
-    const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = Math.min(freq * 4 + 600, 3500);
-    lp.Q.value = 0.2;
+    for (const detune of [-6, 6]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      osc.detune.value = detune;
+      osc.connect(g);
+      osc.start(start);
+      osc.stop(start + duration + 0.2);
+    }
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(gain, start + 0.015);
+    g.gain.setTargetAtTime(0, start + 0.05, duration * 0.4);
+    g.connect(this.musicGain);
+  }
 
-    osc.type = type;
-    osc.frequency.value = freq;
+  /**
+   * A warm synth voice: two slightly-detuned sawtooths (analog-style chorus)
+   * with a slow swell envelope, routed through the shared resonant filter via
+   * the music bus. Detuned saws are what make a pad sound mature rather than
+   * toy-like. `sub` uses a single, rounder triangle for the bass.
+   */
+  private padVoice(freq: number, duration: number, gain: number, when: number, sub = false): void {
+    if (!this.ready || !this.musicGain) return;
+    const ctx = this.ctx!;
+    const start = Math.max(when, ctx.currentTime + 0.005);
+    const g = ctx.createGain();
 
-    const attack = 0.02;
-    const releaseTau = duration * 0.35; // time-constant for the exponential tail
+    const makeOsc = (detuneCents: number, type: OscillatorType) => {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.detune.value = detuneCents;
+      osc.connect(g);
+      osc.start(start);
+      osc.stop(start + duration + 0.4);
+      return osc;
+    };
+
+    if (sub) {
+      makeOsc(0, 'triangle');
+    } else {
+      makeOsc(-7, 'sawtooth');
+      makeOsc(7, 'sawtooth'); // detuned pair → chorused, warm
+    }
+
+    // Slow swell in, long fade out — pad-like, never percussive.
+    const attack = duration * 0.25;
     g.gain.setValueAtTime(0, start);
     g.gain.linearRampToValueAtTime(gain, start + attack);
-    // Begin an exponential decay toward 0 after a short sustain.
-    g.gain.setTargetAtTime(0, start + duration * 0.5, releaseTau);
-
-    osc.connect(g);
-    g.connect(lp);
-    lp.connect(this.musicGain);
-    osc.start(start);
-    // Stop well after the release tail has decayed to inaudible.
-    osc.stop(start + duration + releaseTau * 4 + 0.05);
+    g.gain.setTargetAtTime(0, start + duration * 0.55, duration * 0.3);
+    g.connect(this.musicGain);
   }
+
 }
 
 /**

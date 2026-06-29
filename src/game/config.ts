@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
 import { PreloadScene } from './scenes/PreloadScene';
 import { MainMenuScene } from './scenes/MainMenuScene';
+import { ShopScene } from './scenes/ShopScene';
 import { GameScene } from './scenes/GameScene';
 import { GameOverScene } from './scenes/GameOverScene';
 import { GAME_HEIGHT, GAME_WIDTH } from './utils/constants';
@@ -12,7 +13,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
   backgroundColor: '#050b19',
-  scene: [BootScene, PreloadScene, MainMenuScene, GameScene, GameOverScene],
+  scene: [BootScene, PreloadScene, MainMenuScene, ShopScene, GameScene, GameOverScene],
   pixelArt: false,
   roundPixels: false,
   antialias: true,

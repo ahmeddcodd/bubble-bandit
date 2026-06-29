@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH } from '../utils/constants';
 import { audio } from '../managers/AudioManager';
-import { getSave } from '../utils/save';
+import { getSave, coinBalance } from '../utils/save';
+import { charTextureKey } from '../data/characters';
 import * as Playables from '../managers/Playables';
 
 export class MainMenuScene extends Phaser.Scene {
@@ -90,7 +91,7 @@ export class MainMenuScene extends Phaser.Scene {
     const hero = this.add.container(GAME_WIDTH / 2, 424);
     const glow = this.add.circle(0, 0, 136, 0x77eaff, 0.12);
     const bubble = this.add.image(0, 0, 'bubble').setScale(1.82);
-    const thief = this.add.image(0, 7, 'thief').setScale(1.0);
+    const thief = this.add.image(0, 7, charTextureKey(getSave().equippedCharacter)).setScale(1.0);
     const coinL = this.add.image(-126, -18, 'coin').setScale(0.82).setAngle(-18);
     const gemR = this.add.image(126, 24, 'gem-ruby').setScale(0.75).setAngle(14);
     const gemB = this.add.image(90, -98, 'gem-blue').setScale(0.78).setAngle(-10);
@@ -103,16 +104,16 @@ export class MainMenuScene extends Phaser.Scene {
 
   private createPlayButton(): void {
     const save = getSave();
-    const hint = this.add.text(GAME_WIDTH / 2, 655, 'Hold anywhere to inflate. Release to shrink.', {
+    const hint = this.add.text(GAME_WIDTH / 2, 632, 'Hold anywhere to inflate. Release to shrink.', {
       fontFamily: 'Arial, sans-serif',
-      fontSize: '24px',
+      fontSize: '23px',
       color: '#e9fcff',
       align: 'center',
       wordWrap: { width: 430 }
     }).setOrigin(0.5);
     hint.setAlpha(0.9);
 
-    const best = this.add.text(GAME_WIDTH / 2, 714, `Best Score: ${save.bestScore.toLocaleString()}`, {
+    this.add.text(GAME_WIDTH / 2, 684, `Best Score: ${save.bestScore.toLocaleString()}`, {
       fontFamily: 'Arial Black, Arial, sans-serif',
       fontSize: '22px',
       color: '#ffd65d',
@@ -120,7 +121,14 @@ export class MainMenuScene extends Phaser.Scene {
       strokeThickness: 4
     }).setOrigin(0.5);
 
-    const button = this.add.image(GAME_WIDTH / 2, 802, 'button').setInteractive({ useHandCursor: true });
+    this.add.text(GAME_WIDTH / 2, 716, `Coins: ${coinBalance().toLocaleString()}`, {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '19px',
+      color: '#bff6ff'
+    }).setOrigin(0.5);
+
+    // PLAY
+    const button = this.add.image(GAME_WIDTH / 2, 784, 'button').setInteractive({ useHandCursor: true });
     const label = this.add.text(button.x, button.y - 2, 'PLAY', {
       fontFamily: 'Arial Black, Impact, sans-serif',
       fontSize: '34px',
@@ -128,7 +136,6 @@ export class MainMenuScene extends Phaser.Scene {
       stroke: '#09284a',
       strokeThickness: 6
     }).setOrigin(0.5);
-
     button.on('pointerover', () => button.setScale(1.03));
     button.on('pointerout', () => button.setScale(1));
     button.on('pointerdown', () => {
@@ -138,6 +145,31 @@ export class MainMenuScene extends Phaser.Scene {
       audio.uiClick();
     });
     button.on('pointerup', () => this.startGame());
+
+    // SHOP
+    const shop = this.add.image(GAME_WIDTH / 2, 864, 'button').setScale(0.82).setInteractive({ useHandCursor: true });
+    shop.setAlpha(0.92);
+    const shopLabel = this.add.text(shop.x, shop.y - 1, 'SHOP', {
+      fontFamily: 'Arial Black, Impact, sans-serif',
+      fontSize: '26px',
+      color: '#ffe08a',
+      stroke: '#09284a',
+      strokeThickness: 5
+    }).setOrigin(0.5);
+    shop.on('pointerover', () => shop.setScale(0.86));
+    shop.on('pointerout', () => shop.setScale(0.82));
+    shop.on('pointerdown', () => {
+      shop.setScale(0.78);
+      shopLabel.setY(shop.y + 1);
+      audio.ensure();
+      audio.uiClick();
+    });
+    shop.on('pointerup', () => this.openShop());
+  }
+
+  private openShop(): void {
+    this.cameras.main.fadeOut(180, 4, 12, 27);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => this.scene.start('ShopScene'));
   }
 
   private startGame(): void {

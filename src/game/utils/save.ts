@@ -4,12 +4,20 @@ export interface SaveData {
   bestScore: number;
   totalCoins: number;
   gamesPlayed: number;
+  ownedCharacters: string[];
+  equippedCharacter: string;
+  // Lifetime coins spent. Spendable balance = totalCoins - spentCoins, so the
+  // lifetime totalCoins stat is never decremented.
+  spentCoins: number;
 }
 
 const fallback: SaveData = {
   bestScore: 0,
   totalCoins: 0,
-  gamesPlayed: 0
+  gamesPlayed: 0,
+  ownedCharacters: ['thief'],
+  equippedCharacter: 'thief',
+  spentCoins: 0
 };
 
 // Cloud-only store. All persistence goes through the YouTube Playables cloud
@@ -31,16 +39,25 @@ export function setProgressProvider(fn: (() => Partial<SaveData>) | null): void 
 }
 
 function parse(raw: string): SaveData {
-  if (!raw) return { ...fallback };
+  if (!raw) return { ...fallback, ownedCharacters: ['thief'] };
   try {
     const data = JSON.parse(raw) as Partial<SaveData>;
+    // Always guarantee the free thief is owned, even on old/partial payloads.
+    const owned = Array.isArray(data.ownedCharacters) ? data.ownedCharacters.map(String) : [];
+    if (!owned.includes('thief')) owned.unshift('thief');
+    const equipped = typeof data.equippedCharacter === 'string' && owned.includes(data.equippedCharacter)
+      ? data.equippedCharacter
+      : 'thief';
     return {
       bestScore: Number(data.bestScore ?? 0),
       totalCoins: Number(data.totalCoins ?? 0),
-      gamesPlayed: Number(data.gamesPlayed ?? 0)
+      gamesPlayed: Number(data.gamesPlayed ?? 0),
+      ownedCharacters: owned,
+      equippedCharacter: equipped,
+      spentCoins: Number(data.spentCoins ?? 0)
     };
   } catch {
-    return { ...fallback };
+    return { ...fallback, ownedCharacters: ['thief'] };
   }
 }
 
@@ -83,4 +100,31 @@ export function flushSave(): Promise<void> {
   if (!loaded) return Promise.resolve();
   if (progressProvider) cache = { ...cache, ...progressProvider() };
   return Playables.save(JSON.stringify(cache)).catch(() => Playables.logError());
+}
+
+// --- Progression / economy -------------------------------------------------
+
+/** Spendable coin balance: lifetime collected minus lifetime spent (clamped ≥ 0). */
+export function coinBalance(): number {
+  return Math.max(0, cache.totalCoins - cache.spentCoins);
+}
+
+export function ownsCharacter(id: string): boolean {
+  return cache.ownedCharacters.includes(id);
+}
+
+/** Buy a character if affordable and not already owned. Returns success. */
+export function buyCharacter(id: string, cost: number): boolean {
+  if (ownsCharacter(id) || coinBalance() < cost) return false;
+  saveData({
+    ownedCharacters: [...cache.ownedCharacters, id],
+    spentCoins: cache.spentCoins + cost
+  });
+  return true;
+}
+
+/** Equip an owned character. No-op if not owned. */
+export function equipCharacter(id: string): void {
+  if (!ownsCharacter(id)) return;
+  saveData({ equippedCharacter: id });
 }

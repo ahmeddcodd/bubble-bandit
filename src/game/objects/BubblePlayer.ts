@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE, PLAYER } from '../utils/constants';
+import { charTextureKey } from '../data/characters';
+import { getSave } from '../utils/save';
 
 export class BubblePlayer extends Phaser.GameObjects.Container {
   public isHolding = false;
@@ -31,14 +33,21 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
   // Decaying "happy collect" pop, blended into the thief's vertical bob.
   private collectHop = 0;
 
+  // The equipped character riding the bubble. Mood textures only exist for the
+  // thief; other characters keep their single texture (pose/squash still apply).
+  private readonly characterId: string;
+  // Perk multiplier applied to the collect radius (1 = default).
+  public collectRadiusMult = 1;
+
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y);
     scene.add.existing(this);
 
+    this.characterId = getSave().equippedCharacter;
     this.shadow = scene.add.ellipse(0, 56, 86, 24, 0x000000, 0.18);
     this.glow = scene.add.circle(0, 0, 58, 0x76eaff, 0.16);
     this.bubble = scene.add.image(0, 0, 'bubble');
-    this.thief = scene.add.image(0, 6, 'thief').setScale(0.63);
+    this.thief = scene.add.image(0, 6, charTextureKey(this.characterId)).setScale(0.63);
     // Sweat drop near the thief's temple; only visible when scared.
     this.sweat = scene.add.circle(11, -2, 3, 0x9fe4ff, 0.95).setVisible(false);
     this.sweat.setStrokeStyle(1, 0xffffff, 0.6);
@@ -152,13 +161,16 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Set the thief's mood. Swaps the baked face texture only on change (cheap),
-   * and toggles the sweat drop. Fear overrides greed (handled by the caller).
+   * Set the character's mood. Only the thief has baked mood-face variants, so
+   * for other characters we keep their single texture (the pose/bob/sweat still
+   * convey mood). The sweat drop applies to everyone.
    */
   setMood(mood: 'neutral' | 'greed' | 'scared'): void {
     if (mood === this.mood) return;
     this.mood = mood;
-    this.thief.setTexture(mood === 'greed' ? 'thief-greed' : mood === 'scared' ? 'thief-scared' : 'thief');
+    if (this.characterId === 'thief') {
+      this.thief.setTexture(mood === 'greed' ? 'thief-greed' : mood === 'scared' ? 'thief-scared' : 'thief');
+    }
     this.sweat.setVisible(mood === 'scared');
   }
 
@@ -211,7 +223,7 @@ export class BubblePlayer extends Phaser.GameObjects.Container {
   }
 
   getCollectRadius(): number {
-    return PLAYER.baseCollectRadius * this.bubbleScale;
+    return PLAYER.baseCollectRadius * this.bubbleScale * this.collectRadiusMult;
   }
 
   isLarge(): boolean {

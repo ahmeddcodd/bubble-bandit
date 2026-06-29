@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH } from '../utils/constants';
+import { CHARACTERS, CHAR_W, CHAR_H } from '../data/characters';
 
 export class PreloadScene extends Phaser.Scene {
   constructor() {
@@ -21,6 +22,7 @@ export class PreloadScene extends Phaser.Scene {
     this.createThiefTexture('thief', 'neutral');
     this.createThiefTexture('thief-greed', 'greed');
     this.createThiefTexture('thief-scared', 'scared');
+    this.createCharacterTextures();
     this.createGemTexture('gem-blue', COLORS.cyan, COLORS.cyanDark, 44, 52);
     this.createGemTexture('gem-ruby', COLORS.ruby, COLORS.rubyDark, 48, 58);
     this.createPearlTexture();
@@ -28,8 +30,80 @@ export class PreloadScene extends Phaser.Scene {
     this.createSpikeOrbTexture();
     this.createLaserTexture();
     this.createPowerTexture();
+    this.createPowerupTextures();
     this.createBackgroundDust();
     this.createButtonTexture();
+  }
+
+  // Procedurally render each shop character (except the thief, which has its own
+  // mood-variant textures) into a char-<id> texture matching the thief canvas.
+  private createCharacterTextures(): void {
+    for (const c of CHARACTERS) {
+      if (!c.draw) continue;
+      this.withGraphics((g) => {
+        g.clear();
+        c.draw!(g);
+        g.generateTexture(`char-${c.id}`, CHAR_W, CHAR_H);
+      });
+    }
+  }
+
+  // Timed power-up pickups (drawn like soap-shield: a glowing disc + glyph).
+  private createPowerupTextures(): void {
+    // Magnet — red/white horseshoe.
+    this.withGraphics((g) => {
+      g.clear();
+      g.fillStyle(0xff5a5a, 0.18);
+      g.fillCircle(32, 32, 30);
+      g.lineStyle(11, 0xff5050, 1);
+      g.beginPath();
+      g.arc(32, 30, 14, Phaser.Math.DegToRad(150), Phaser.Math.DegToRad(390));
+      g.strokePath();
+      g.fillStyle(0xff5050, 1);
+      g.fillRect(13, 30, 11, 16);
+      g.fillRect(40, 30, 11, 16);
+      g.fillStyle(0xe9eef5, 1);
+      g.fillRect(13, 42, 11, 7);
+      g.fillRect(40, 42, 11, 7);
+      g.generateTexture('pu-magnet', 64, 64);
+    });
+    // Slow-mo — clock/hourglass feel: ring + hands.
+    this.withGraphics((g) => {
+      g.clear();
+      g.fillStyle(0x8a6cff, 0.18);
+      g.fillCircle(32, 32, 30);
+      g.fillStyle(0xb59bff, 1);
+      g.fillCircle(32, 32, 21);
+      g.fillStyle(0x2a2140, 1);
+      g.fillCircle(32, 32, 16);
+      g.lineStyle(3, COLORS.white, 0.95);
+      g.strokeLineShape(new Phaser.Geom.Line(32, 32, 32, 21));
+      g.strokeLineShape(new Phaser.Geom.Line(32, 32, 40, 34));
+      g.fillStyle(COLORS.white, 1);
+      g.fillCircle(32, 32, 2.5);
+      g.generateTexture('pu-slowmo', 64, 64);
+    });
+    // Score x2 — gold "x2" badge.
+    this.withGraphics((g) => {
+      g.clear();
+      g.fillStyle(COLORS.gold, 0.18);
+      g.fillCircle(32, 32, 30);
+      g.fillStyle(COLORS.coin, 1);
+      g.fillCircle(32, 32, 22);
+      g.lineStyle(3, 0xfff0a1, 0.9);
+      g.strokeCircle(32, 32, 22);
+      // crude "x2" using rects/lines
+      g.lineStyle(4, 0x6b4a07, 1);
+      g.strokeLineShape(new Phaser.Geom.Line(20, 25, 30, 39));
+      g.strokeLineShape(new Phaser.Geom.Line(30, 25, 20, 39));
+      g.fillStyle(0x6b4a07, 1);
+      g.fillRect(37, 25, 9, 4);
+      g.fillRect(42, 25, 4, 9);
+      g.fillRect(37, 33, 9, 4);
+      g.fillRect(37, 33, 4, 7);
+      g.fillRect(37, 39, 9, 4);
+      g.generateTexture('pu-scorex2', 64, 64);
+    });
   }
 
   private withGraphics(callback: (g: Phaser.GameObjects.Graphics) => void): void {

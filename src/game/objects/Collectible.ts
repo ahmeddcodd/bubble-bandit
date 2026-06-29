@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 
-export type CollectibleType = 'gem' | 'coin' | 'ruby' | 'pearl' | 'shield';
+export type CollectibleType = 'gem' | 'coin' | 'ruby' | 'pearl' | 'shield' | 'magnet' | 'slowmo' | 'scorex2';
 
 export interface CollectibleConfig {
   type: CollectibleType;
@@ -13,7 +13,10 @@ const TEXTURE_BY_TYPE: Record<CollectibleType, string> = {
   coin: 'coin',
   ruby: 'gem-ruby',
   pearl: 'pearl',
-  shield: 'soap-shield'
+  shield: 'soap-shield',
+  magnet: 'pu-magnet',
+  slowmo: 'pu-slowmo',
+  scorex2: 'pu-scorex2'
 };
 
 const VALUE_BY_TYPE: Record<CollectibleType, number> = {
@@ -21,7 +24,10 @@ const VALUE_BY_TYPE: Record<CollectibleType, number> = {
   coin: 5,
   ruby: 85,
   pearl: 35,
-  shield: 0
+  shield: 0,
+  magnet: 0,
+  slowmo: 0,
+  scorex2: 0
 };
 
 const RADIUS_BY_TYPE: Record<CollectibleType, number> = {
@@ -29,7 +35,10 @@ const RADIUS_BY_TYPE: Record<CollectibleType, number> = {
   coin: 18,
   ruby: 22,
   pearl: 21,
-  shield: 25
+  shield: 25,
+  magnet: 25,
+  slowmo: 25,
+  scorex2: 25
 };
 
 export class Collectible extends Phaser.GameObjects.Container {
@@ -53,10 +62,17 @@ export class Collectible extends Phaser.GameObjects.Container {
     this.baseY = config.y;
     this.spinSpeed = Phaser.Math.FloatBetween(-2.2, 2.2);
 
-    const auraColor = config.type === 'ruby' ? 0xff4b6f : config.type === 'shield' ? 0x7dffdf : 0x86e9ff;
-    this.aura = scene.add.circle(0, 0, this.radius + 13, auraColor, config.type === 'coin' ? 0.07 : 0.12);
+    const isPowerup = config.type === 'magnet' || config.type === 'slowmo' || config.type === 'scorex2';
+    const auraColor =
+      config.type === 'ruby' ? 0xff4b6f :
+      config.type === 'shield' ? 0x7dffdf :
+      config.type === 'magnet' ? 0xff7a7a :
+      config.type === 'slowmo' ? 0xb59bff :
+      config.type === 'scorex2' ? 0xffe08a :
+      0x86e9ff;
+    this.aura = scene.add.circle(0, 0, this.radius + 13, auraColor, config.type === 'coin' ? 0.07 : 0.14);
     this.sprite = scene.add.image(0, 0, TEXTURE_BY_TYPE[config.type]);
-    this.sprite.setScale(config.type === 'coin' ? 0.76 : config.type === 'ruby' ? 0.78 : config.type === 'shield' ? 0.72 : 0.82);
+    this.sprite.setScale(config.type === 'coin' ? 0.76 : config.type === 'ruby' ? 0.78 : (config.type === 'shield' || isPowerup) ? 0.72 : 0.82);
     this.add([this.aura, this.sprite]);
     this.setDepth(config.type === 'ruby' ? 58 : 52);
   }

@@ -8,6 +8,7 @@ import { audio } from '../managers/AudioManager';
 import { BG, COLORS, GAME_HEIGHT, GAME_WIDTH, JUICE, ZONES } from '../utils/constants';
 import { flash, lerpColor, ringPulse, shake } from '../utils/juice';
 import { getSave, saveData, setProgressProvider } from '../utils/save';
+import { getCharacter } from '../data/characters';
 
 interface RunStats {
   score: number;
@@ -55,6 +56,12 @@ export class GameScene extends Phaser.Scene {
   private shieldIcon!: Phaser.GameObjects.Image;
   private tutorialGroup!: Phaser.GameObjects.Container;
 
+  // Active timed power-ups: scene-clock (ms) timestamps until which each is live.
+  private magnetUntil = 0;
+  private slowmoUntil = 0;
+  private scorex2Until = 0;
+  private powerupIcon!: Phaser.GameObjects.Image;
+
   // Pooled, reused Text objects. Creating a Phaser Text rasterizes a new GPU
   // texture every time — expensive when pickups arrive in clusters (e.g. a row
   // of 5 pearls firing +score floats and PEARL PERFECT banners in a few frames).
@@ -79,6 +86,7 @@ export class GameScene extends Phaser.Scene {
     this.tower = new TowerManager(this);
     this.combo = new ComboManager();
     this.player = new BubblePlayer(this, GAME_WIDTH / 2, GAME_HEIGHT * 0.64);
+    this.applyCharacterPerk();
 
     this.setupInput();
     this.cameras.main.fadeIn(220, 4, 12, 27);
@@ -106,6 +114,18 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // Apply the equipped character's small, additive perk once at run start.
+  private applyCharacterPerk(): void {
+    const perk = getCharacter(getSave().equippedCharacter).perk;
+    if (perk === 'startShield') {
+      this.player.grantShield();
+    } else if (perk === 'collectRadius') {
+      this.player.collectRadiusMult = 1.12;
+    } else if (perk === 'slowStart') {
+      this.tower.enableSlowStart(6);
+    }
+  }
+
   update(_: number, delta: number): void {
     if (this.isRunOver) return;
 
@@ -115,11 +135,17 @@ export class GameScene extends Phaser.Scene {
     this.combo.update(this.time.now);
     this.player.updatePlayer(delta, this.activePointerX);
 
+    // Slow-mo power-up dampens the tower scroll while active (set before update,
+    // which reads speedMult).
+    this.tower.speedMult = this.time.now < this.slowmoUntil ? 0.6 : 1;
+
     this.tower.update(delta, {
       collectibles: this.collectibles,
       spikeOrbs: this.spikeOrbs,
       lasers: this.lasers
     });
+
+    if (this.time.now < this.magnetUntil) this.applyMagnet(delta);
 
     this.updateCollectibles(delta);
     this.updateHazards(delta);
@@ -177,6 +203,9 @@ export class GameScene extends Phaser.Scene {
     this.floatIndex = 0;
     this.bannerPool = [];
     this.bannerIndex = 0;
+    this.magnetUntil = 0;
+    this.slowmoUntil = 0;
+    this.scorex2Until = 0;
   }
 
   private createBackground(): void {
@@ -318,6 +347,8 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(210);
 
     this.shieldIcon = this.add.image(GAME_WIDTH - 40, 89, 'soap-shield').setScale(0.42).setDepth(210).setAlpha(0.3);
+    // Active power-up indicator (below the shield icon), hidden until one is live.
+    this.powerupIcon = this.add.image(GAME_WIDTH - 40, 138, 'pu-magnet').setScale(0.5).setDepth(210).setVisible(false);
   }
 
   private createTutorial(): void {
@@ -432,6 +463,21 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // Magnet power-up: ease nearby uncollected loot toward the player so it gets
+  // swept up. Skips power-ups themselves and already-collecting items.
+  private applyMagnet(deltaMs: number): void {
+    const pullRadius = 280;
+    const ease = Math.min(1, 9 * (deltaMs / 1000));
+    for (const item of this.collectibles) {
+      if (item.collected) continue;
+      if (item.type === 'magnet' || item.type === 'slowmo' || item.type === 'scorex2') continue;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, item.x, item.y);
+      if (d > pullRadius) continue;
+      item.x += (this.player.x - item.x) * ease;
+      item.y += (this.player.y - item.y) * ease;
+    }
+  }
+
   private handleCollect(item: Collectible, playerVec: Phaser.Math.Vector2): void {
     const tint = item.type === 'ruby' ? 0xff4b6f : item.type === 'coin' ? 0xffd35c : item.type === 'shield' ? 0x7dffdf : 0x8fefff;
     item.collectTo(playerVec, () => item.destroy());
@@ -446,12 +492,19 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (item.type === 'magnet' || item.type === 'slowmo' || item.type === 'scorex2') {
+      this.collectPowerup(item);
+      return;
+    }
+
     if (item.type === 'coin') this.coins += 1;
     if (item.type === 'gem' || item.type === 'pearl') this.gems += 1;
     if (item.type === 'ruby') this.rubies += 1;
 
     const result = this.combo.collect(item.type, item.value, this.player, this.time.now);
-    this.score += result.score;
+    // Score x2 power-up doubles points while active.
+    const x2 = this.time.now < this.scorex2Until ? 2 : 1;
+    this.score += result.score * x2;
 
     // Rare, high-value pickups feel chunkier: bigger squash, ring pulse, tiny hit-stop.
     const punch = item.type === 'ruby' ? 1 : item.type === 'pearl' ? 0.65 : 0;
@@ -464,10 +517,32 @@ export class GameScene extends Phaser.Scene {
       ringPulse(this, item.x, item.y, item.radius + 6, tint);
     }
 
-    this.showFloatText(`+${result.score}`, item.x, item.y - 12, item.type === 'ruby' ? '#ff6d8a' : '#ffffff', 22 + comboBoost * 8);
+    this.showFloatText(`+${result.score * x2}`, item.x, item.y - 12, item.type === 'ruby' ? '#ff6d8a' : '#ffffff', 22 + comboBoost * 8);
     if (result.message) this.showComboBanner(result.message);
 
     audio.collect(item.type, result.combo);
+  }
+
+  // Activate a timed power-up: set its expiry, show feedback. Effects are read
+  // each frame from the *Until timestamps (see update / checkCollectibles).
+  private collectPowerup(item: Collectible): void {
+    const now = this.time.now;
+    const tint = item.type === 'magnet' ? 0xff7a7a : item.type === 'slowmo' ? 0xb59bff : 0xffe08a;
+    this.spawnCollectBurst(item.x, item.y, tint);
+    ringPulse(this, item.x, item.y, item.radius + 10, tint);
+    this.player.onCollect(0.5);
+    audio.shieldPickup();
+
+    if (item.type === 'magnet') {
+      this.magnetUntil = now + 6000;
+      this.showComboBanner('MAGNET!');
+    } else if (item.type === 'slowmo') {
+      this.slowmoUntil = now + 4000;
+      this.showComboBanner('SLOW-MO!');
+    } else {
+      this.scorex2Until = now + 8000;
+      this.showComboBanner('SCORE x2!');
+    }
   }
 
   private checkHazards(): void {
@@ -555,6 +630,22 @@ export class GameScene extends Phaser.Scene {
     this.timeText.setText(`${this.timeAlive.toFixed(1)}s`);
     this.shieldIcon.setAlpha(this.player.shieldHits > 0 ? 1 : 0.25);
     this.shieldIcon.setScale(this.player.shieldHits > 0 ? 0.5 + Math.sin(this.time.now / 170) * 0.035 : 0.42);
+    this.updatePowerupIcon();
+  }
+
+  // Show the icon of the active power-up with the most time left; hide if none.
+  private updatePowerupIcon(): void {
+    const now = this.time.now;
+    let key: string | null = null;
+    let best = 0;
+    if (this.magnetUntil > now && this.magnetUntil > best) { best = this.magnetUntil; key = 'pu-magnet'; }
+    if (this.slowmoUntil > now && this.slowmoUntil > best) { best = this.slowmoUntil; key = 'pu-slowmo'; }
+    if (this.scorex2Until > now && this.scorex2Until > best) { best = this.scorex2Until; key = 'pu-scorex2'; }
+    if (!key) {
+      this.powerupIcon.setVisible(false);
+      return;
+    }
+    this.powerupIcon.setTexture(key).setVisible(true).setScale(0.5 + Math.sin(now / 160) * 0.04);
   }
 
   // Pre-create the reusable text objects once (one-time texture cost, off the

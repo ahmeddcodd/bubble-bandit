@@ -12,6 +12,10 @@ export interface SpawnedObjects {
 export class TowerManager {
   public scrollSpeed: number = DIFFICULTY.startScroll;
   public elapsedSeconds = 0;
+  // Temporary scroll multiplier set externally (e.g. the slow-mo power-up). 1 = normal.
+  public speedMult = 1;
+  // Seconds of "gentle start" remaining (ninja perk): eases scroll speed up.
+  private slowStartSeconds = 0;
 
   private collectibleTimer = 0;
   private hazardTimer = 0;
@@ -22,12 +26,23 @@ export class TowerManager {
     this.scene = scene;
   }
 
+  /** Ninja perk: ramp the tower up more gently for the first `seconds`. */
+  enableSlowStart(seconds: number): void {
+    this.slowStartSeconds = seconds;
+  }
+
   update(deltaMs: number, out: SpawnedObjects): void {
     this.elapsedSeconds += deltaMs / 1000;
-    this.scrollSpeed = Math.min(
+    let speed = Math.min(
       DIFFICULTY.maxScroll,
       DIFFICULTY.startScroll + this.elapsedSeconds * DIFFICULTY.scrollGainPerSecond
     );
+    // Slow-start perk: dampen early scroll, easing from ~0.7x back to 1x.
+    if (this.slowStartSeconds > 0 && this.elapsedSeconds < this.slowStartSeconds) {
+      const t = this.elapsedSeconds / this.slowStartSeconds; // 0→1
+      speed *= 0.7 + 0.3 * t;
+    }
+    this.scrollSpeed = speed * this.speedMult;
 
     this.collectibleTimer += deltaMs;
     this.hazardTimer += deltaMs;
@@ -49,16 +64,30 @@ export class TowerManager {
   reset(): void {
     this.scrollSpeed = DIFFICULTY.startScroll;
     this.elapsedSeconds = 0;
+    this.speedMult = 1;
+    this.slowStartSeconds = 0;
     this.collectibleTimer = 0;
     this.hazardTimer = 0;
     this.sceneryTimer = 0;
   }
 
   private spawnCollectiblePattern(target: Collectible[]): void {
-    const pattern = Phaser.Math.Between(0, 5);
     const startY = -70;
     const centerX = Phaser.Math.Between(112, GAME_WIDTH - 112);
     const rubyUnlocked = this.elapsedSeconds > DIFFICULTY.rubyFirstSecond;
+
+    // Rare timed power-up — one at a time, only after the opening ~10s, low odds
+    // so it stays a treat. Flanked by a couple of coins like the shield pattern.
+    if (this.elapsedSeconds > 10 && Math.random() < 0.05) {
+      const kinds: CollectibleType[] = ['magnet', 'slowmo', 'scorex2'];
+      const type = kinds[Phaser.Math.Between(0, kinds.length - 1)];
+      target.push(new Collectible(this.scene, { type, x: centerX, y: startY }));
+      target.push(new Collectible(this.scene, { type: 'coin', x: centerX - 46, y: startY - 52 }));
+      target.push(new Collectible(this.scene, { type: 'coin', x: centerX + 46, y: startY - 52 }));
+      return;
+    }
+
+    const pattern = Phaser.Math.Between(0, 5);
 
     if (pattern === 0) {
       for (let i = 0; i < 7; i += 1) {

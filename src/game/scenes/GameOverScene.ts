@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { COLORS, GAME_HEIGHT, GAME_WIDTH } from '../utils/constants';
 import { audio } from '../managers/AudioManager';
+import { charTextureKey } from '../data/characters';
+import { getSave } from '../utils/save';
 
 interface RunStats {
   score: number;
@@ -79,7 +81,7 @@ export class GameOverScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     const bubble = this.add.image(GAME_WIDTH / 2, 300, 'bubble').setScale(1.12).setAlpha(0.5);
-    const thief = this.add.image(GAME_WIDTH / 2, 310, 'thief').setScale(0.62).setAngle(-14);
+    const thief = this.add.image(GAME_WIDTH / 2, 310, charTextureKey(getSave().equippedCharacter)).setScale(0.62).setAngle(-14);
     const sad = this.add.text(GAME_WIDTH / 2 + 80, 246, 'too greedy?', {
       fontFamily: 'Arial Black, Arial, sans-serif',
       fontSize: '17px',
